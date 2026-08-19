@@ -110,7 +110,7 @@ como contraseña.
 | --- | --- |
 | `get_projects` | Lista proyectos (`id`, `name`, `status`). |
 | `get_work_packages` | Lista tareas. Params opcionales: `projectId`, `status`, `assignee`. |
-| `get_activities` | Lista actividades de time entry (`id`, `name`). |
+| `get_activities` | Lista actividades de time entry (`id`, `name`). Se obtienen del schema de `time_entries` (`activity._links.allowedValues`), ya que OpenProject no expone una colección directa en `/api/v3/time_entries/activities`. |
 | `get_time_entries` | Consulta horas ya registradas. Params opcionales: `projectId`, `workPackageId`, `from`, `to`. |
 
 ### Sincronización

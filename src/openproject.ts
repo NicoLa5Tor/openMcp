@@ -1,6 +1,7 @@
 import type {
   OPActivity,
   OPCollection,
+  OPLink,
   OPProject,
   OPTimeEntry,
   OPWorkPackage,
@@ -214,11 +215,25 @@ export class OpenProjectClient {
     return this.collectAll<OPWorkPackage>(basePath, params);
   }
 
+  /**
+   * OpenProject no expone una colección GET /api/v3/time_entries/activities
+   * (solo el recurso individual .../activities/{id}, que 404 si se llama
+   * como listado). Las actividades disponibles se leen del schema del
+   * recurso time_entries, en activity._links.allowedValues.
+   */
   async getActivities(): Promise<OPActivity[]> {
-    return this.collectAll<OPActivity>(
-      "/api/v3/time_entries/activities",
-      new URLSearchParams(),
-    );
+    const schema = await this.request<{
+      activity?: { _links?: { allowedValues?: OPLink[] } };
+    }>("/api/v3/time_entries/schema");
+    const allowed = schema?.activity?._links?.allowedValues;
+    if (!Array.isArray(allowed)) {
+      throw new OpenProjectError(
+        "OpenProject no devolvió actividades en el schema de time_entries (activity._links.allowedValues). Verifica la versión/configuración de tu instancia.",
+      );
+    }
+    return allowed
+      .map((link) => ({ id: idFromHref(link.href), name: link.title ?? "" }))
+      .filter((a): a is OPActivity => a.id !== undefined);
   }
 
   async getTimeEntries(opts: {
