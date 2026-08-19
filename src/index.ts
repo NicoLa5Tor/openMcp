@@ -20,6 +20,7 @@ import {
   iso8601ToHours,
   readConfig,
 } from "./openproject.js";
+import { buildGalleryHtml, writeGalleryFile } from "./gallery.js";
 import type { TimelogEntry } from "./types.js";
 
 // ---------- helpers de formato ----------
@@ -57,6 +58,22 @@ function formatEntry(e: TimelogEntry): string {
     );
   }
   return parts.join("\n");
+}
+
+function groupLabel(
+  e: TimelogEntry,
+  groupBy: "workPackageId" | "projectId" | "activityId" | "spentOn",
+): string {
+  switch (groupBy) {
+    case "workPackageId":
+      return e.workPackageId !== undefined ? `WP ${e.workPackageId}` : "Sin asignar";
+    case "projectId":
+      return e.projectId !== undefined ? `Proyecto ${e.projectId}` : "Sin proyecto";
+    case "activityId":
+      return e.activityId !== undefined ? `Actividad ${e.activityId}` : "Sin actividad";
+    case "spentOn":
+      return e.spentOn;
+  }
 }
 
 /** Devuelve un cliente configurado o lanza un error legible. */
@@ -125,15 +142,20 @@ server.registerTool(
   "list_entries",
   {
     title: "Listar entradas de la bitácora",
-    description: "Lista las entries de la bitácora local filtrando por status.",
+    description:
+      "Lista las entries de la bitácora local filtrando por status, opcionalmente agrupadas.",
     inputSchema: {
       status: z
         .enum(["pending", "sent", "all"])
         .default("pending")
         .describe("Filtro de estado"),
+      groupBy: z
+        .enum(["workPackageId", "projectId", "activityId", "spentOn"])
+        .optional()
+        .describe("Agrupa el resultado por este campo (con subtotales)"),
     },
   },
-  async ({ status }) => {
+  async ({ status, groupBy }) => {
     try {
       const entries = await listEntries(status);
       if (entries.length === 0) {
@@ -142,8 +164,30 @@ server.registerTool(
       const totalHours = entries.reduce((acc, e) => acc + e.hours, 0);
       const header = `${entries.length} entr${
         entries.length === 1 ? "y" : "ies"
-      } (${status}) · ${totalHours.toFixed(2)}h en total\n`;
-      return text(header + "\n" + entries.map(formatEntry).join("\n\n"));
+      } (${status}) · ${totalHours.toFixed(2)}h en total`;
+
+      if (!groupBy) {
+        return text(header + "\n\n" + entries.map(formatEntry).join("\n\n"));
+      }
+
+      const groups = new Map<string, TimelogEntry[]>();
+      for (const e of entries) {
+        const key = groupLabel(e, groupBy);
+        const arr = groups.get(key) ?? [];
+        arr.push(e);
+        groups.set(key, arr);
+      }
+      const lines = [header, ""];
+      for (const [key, es] of groups) {
+        const groupHours = es.reduce((acc, e) => acc + e.hours, 0);
+        lines.push(
+          `— ${key} — ${es.length} entr${
+            es.length === 1 ? "y" : "ies"
+          } · ${groupHours.toFixed(2)}h`,
+        );
+        lines.push(...es.map(formatEntry), "");
+      }
+      return text(lines.join("\n"));
     } catch (err) {
       return errorText(`No se pudieron listar las entries: ${describeError(err)}`);
     }
@@ -510,6 +554,45 @@ server.registerTool(
       return text(`Se limpiaron ${cleared} entries enviadas.`);
     } catch (err) {
       return errorText(`No se pudieron limpiar: ${describeError(err)}`);
+    }
+  },
+);
+
+// 12. render_gallery
+server.registerTool(
+  "render_gallery",
+  {
+    title: "Generar galería visual de la bitácora",
+    description:
+      "Genera un HTML autocontenido (stats, filtros por grupo y tabla) con las entries de la bitácora y lo escribe en un fichero temporal. Devuelve la ruta del fichero (no el HTML) para publicarla con la tool Artifact, evitando gastar tokens en volcar el HTML en la respuesta.",
+    inputSchema: {
+      status: z
+        .enum(["pending", "sent", "all"])
+        .default("pending")
+        .describe("Filtro de estado"),
+      groupBy: z
+        .enum(["workPackageId", "projectId", "activityId", "none"])
+        .default("workPackageId")
+        .describe("Campo por el que agrupar y colorear las entries"),
+      title: z.string().optional().describe("Título de la galería"),
+    },
+  },
+  async ({ status, groupBy, title }) => {
+    try {
+      const entries = await listEntries(status);
+      if (entries.length === 0) {
+        return text(`No hay entries con status '${status}' para mostrar.`);
+      }
+      const html = buildGalleryHtml(entries, { groupBy, title, status });
+      const filePath = await writeGalleryFile(html);
+      const totalHours = entries.reduce((acc, e) => acc + e.hours, 0);
+      return text(
+        `Galería generada: ${entries.length} entries · ${totalHours.toFixed(2)}h\n` +
+          `Archivo: ${filePath}\n\n` +
+          `Publícala con la tool Artifact usando esa ruta como file_path.`,
+      );
+    } catch (err) {
+      return errorText(`No se pudo generar la galería: ${describeError(err)}`);
     }
   },
 );

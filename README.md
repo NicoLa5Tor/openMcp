@@ -48,6 +48,38 @@ servidor bajo `mcpServers`:
 
 Reinicia Claude Desktop tras guardar.
 
+## Configuración en Claude Code
+
+Es un MCP server estándar por stdio, así que funciona igual en
+[Claude Code](https://claude.com/claude-code) (la CLI). Regístralo a nivel
+usuario (disponible en todos tus proyectos) con:
+
+```bash
+claude mcp add openproject-timelog -s user \
+  -e OPENPROJECT_URL=https://tu-openproject.example.com \
+  -e OPENPROJECT_API_KEY=TU_API_KEY \
+  -- npx -y @nicola5tor/openproject-timelog
+```
+
+Alternativa: editar directamente `~/.claude.json` (a nivel usuario) o el
+`.mcp.json` del proyecto (para que solo aplique ahí), con el mismo bloque
+`mcpServers` que en Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "openproject-timelog": {
+      "command": "npx",
+      "args": ["-y", "@nicola5tor/openproject-timelog"],
+      "env": {
+        "OPENPROJECT_URL": "https://tu-openproject.example.com",
+        "OPENPROJECT_API_KEY": "TU_API_KEY"
+      }
+    }
+  }
+}
+```
+
 ### Cómo obtener tu API key de OpenProject
 
 En OpenProject: **Mi cuenta → Access tokens → API** y genera una clave. El
@@ -66,7 +98,7 @@ como contraseña.
 | Tool | Descripción |
 | --- | --- |
 | `log_entry` | Registra una entrada de horas. Params: `description`*, `hours`*, `workPackageId`, `projectId`, `activityId`, `spentOn` (def. hoy), `startTime`, `endTime`. Si no hay `workPackageId` queda pendiente de asignar. |
-| `list_entries` | Lista entries por estado. Param: `status` = `pending` (def.) \| `sent` \| `all`. |
+| `list_entries` | Lista entries por estado. Params: `status` = `pending` (def.) \| `sent` \| `all`; `groupBy` opcional = `workPackageId` \| `projectId` \| `activityId` \| `spentOn` (agrupa con subtotales). |
 | `edit_entry` | Edita una entry **pendiente**. Params: `id`* + cualquier campo editable. |
 | `assign_entry` | Asigna un work package a varias entries. Params: `entryIds`*, `workPackageId`*. |
 | `delete_entry` | Borra una entry **pendiente**. Param: `id`*. |
@@ -86,6 +118,12 @@ como contraseña.
 | Tool | Descripción |
 | --- | --- |
 | `upload_entries` | Sube entries a OpenProject. Param opcional `entryIds`; si se omite sube todas las `pending` con `workPackageId`. Cada entry necesita `workPackageId` y `activityId`; las que falten se reportan sin subirse. Al subir, marca la entry como `sent`. |
+
+### Vista visual
+
+| Tool | Descripción |
+| --- | --- |
+| `render_gallery` | Genera un HTML autocontenido (stats, filtros por grupo y tabla) con las entries y lo escribe en un fichero temporal. Params: `status` = `pending` (def.) \| `sent` \| `all`; `groupBy` = `workPackageId` (def.) \| `projectId` \| `activityId` \| `none`; `title` opcional. Devuelve la **ruta del fichero**, no el HTML — el cliente MCP la usa para publicarla (p. ej. como Artifact en Claude), sin gastar tokens volcando el HTML en la conversación. |
 
 \* = requerido.
 
@@ -120,6 +158,9 @@ como contraseña.
 > **Tú:** Limpia lo que ya se subió.
 > **Claude:** *(`clear_sent`)*
 
+> **Tú:** Muéstrame la bitácora como galería, agrupada por tarea.
+> **Claude:** *(`render_gallery` groupBy="workPackageId" → publica el HTML resultante como Artifact)*
+
 ## Desarrollo
 
 ```bash
@@ -136,6 +177,7 @@ openproject-timelog/
 │   ├── index.ts        # entry point, setup MCP y registro de tools
 │   ├── store.ts        # CRUD bitácora local (JSON atómico)
 │   ├── openproject.ts  # cliente API OpenProject v3
+│   ├── gallery.ts      # generador de HTML de galería (render_gallery)
 │   └── types.ts        # interfaces/types
 ├── package.json
 ├── tsconfig.json
