@@ -137,7 +137,7 @@ mismo store compartido, así que **Claude Code y Claude Desktop ven lo mismo**.
 
 | Tool | Descripción |
 | --- | --- |
-| `render_gallery` | Genera un HTML autocontenido (stats, filtros por grupo y tabla) con las entries y lo escribe en un fichero temporal. Params: `status` = `pending` (def.) \| `sent` \| `all`; `groupBy` = `workPackageId` (def.) \| `projectId` \| `activityId` \| `none`; `title` opcional. Devuelve la **ruta del fichero**, no el HTML — el cliente MCP la usa para publicarla (p. ej. como Artifact en Claude), sin gastar tokens volcando el HTML en la conversación. |
+| `render_gallery` | Genera un HTML autocontenido (stats, filtros por grupo y tabla con columna de **Actividad** por nombre) con las entries y lo escribe en un fichero temporal. Params: `status` = `pending` (def.) \| `sent` \| `all`; `groupBy` = `workPackageId` (def.) \| `projectId` \| `activityId` \| `none`; `title` opcional. Trae los nombres de actividad de OpenProject (best-effort; si no está configurado, muestra el id). Devuelve la **ruta del fichero**, no el HTML — el cliente MCP la usa para publicarla (p. ej. como Artifact en Claude), sin gastar tokens volcando el HTML en la conversación. |
 
 \* = requerido.
 

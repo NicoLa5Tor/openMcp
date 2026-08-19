@@ -12,6 +12,8 @@ export interface GalleryOptions {
   groupBy: GalleryGroupBy;
   title?: string;
   status: string;
+  /** Mapa activityId -> nombre, para mostrar el nombre de la actividad. */
+  activityNames?: Record<number, string>;
 }
 
 // Pares [fondo, texto] para las badges de grupo; se ciclan si hay más grupos que colores.
@@ -100,6 +102,12 @@ export function buildGalleryHtml(
           }),
         ].join("\n");
 
+  const activityLabel = (e: TimelogEntry): string => {
+    if (e.activityId === undefined) return "—";
+    const name = opts.activityNames?.[e.activityId];
+    return name ? name : `#${e.activityId}`;
+  };
+
   const rows = entries
     .map((e, i) => {
       const key = groupKey(e, opts.groupBy);
@@ -117,6 +125,7 @@ export function buildGalleryHtml(
       <td><span class="badge" style="background:${bg};color:${fg}">${escapeHtml(
         key,
       )}</span></td>
+      <td class="activity">${escapeHtml(activityLabel(e))}</td>
       <td class="desc">${escapeHtml(e.description || "(sin descripción)")}</td>
       <td><span class="badge badge-${e.status}">${e.status}</span></td>
     </tr>`;
@@ -153,6 +162,7 @@ export function buildGalleryHtml(
   td { padding: 10px 14px; vertical-align: middle; }
   td.idx { color: #475569; font-size: .75rem; }
   td.desc { max-width: 420px; line-height: 1.45; color: #cbd5e1; }
+  td.activity { white-space: nowrap; color: #cbd5e1; font-size: 0.78rem; }
 
   .badge { display: inline-block; padding: 2px 9px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; }
   .badge-pending { background: #2d2a1a; color: #fbbf24; }
@@ -187,6 +197,7 @@ ${filterButtons}
       <th>Horario</th>
       <th>Horas</th>
       <th>Grupo</th>
+      <th>Actividad</th>
       <th>Descripción</th>
       <th>Estado</th>
     </tr>

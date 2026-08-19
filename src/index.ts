@@ -683,7 +683,30 @@ server.registerTool(
       if (entries.length === 0) {
         return text(`No hay entries con status '${status}' para mostrar.`);
       }
-      const html = buildGalleryHtml(entries, { groupBy, title, status });
+      // Trae los nombres de actividad (best-effort) para mostrarlos por fila.
+      // Si OpenProject no está configurado o falla, la galería igual se genera
+      // mostrando el id de la actividad.
+      let activityNames: Record<number, string> | undefined;
+      const config = readConfig();
+      if (config) {
+        try {
+          const client = new OpenProjectClient(config);
+          const wpContext = entries.find((e) => e.workPackageId !== undefined)
+            ?.workPackageId;
+          const activities = await client.getActivities(wpContext);
+          activityNames = Object.fromEntries(
+            activities.map((a) => [a.id, a.name]),
+          );
+        } catch {
+          // sin nombres; se muestra el id
+        }
+      }
+      const html = buildGalleryHtml(entries, {
+        groupBy,
+        title,
+        status,
+        activityNames,
+      });
       const filePath = await writeGalleryFile(html);
       const totalHours = entries.reduce((acc, e) => acc + e.hours, 0);
       return text(

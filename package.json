@@ -1,6 +1,6 @@
 {
   "name": "@nicola5tor/openproject-timelog",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server para gestionar una bitácora de horas local y sincronizarla con OpenProject.",
   "type": "module",
   "bin": {
