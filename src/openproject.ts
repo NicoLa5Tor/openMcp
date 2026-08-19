@@ -8,6 +8,49 @@ import type {
 
 const DEFAULT_PAGE_SIZE = 100;
 
+export type ActivityResolution =
+  | { status: "found"; id: number; name: string }
+  | { status: "ambiguous"; candidates: OPActivity[] }
+  | { status: "not_found"; available: OPActivity[] };
+
+/**
+ * Resuelve el nombre de una actividad (tal como aparece en el dropdown de
+ * OpenProject, ej. "Especificación") a su id, tolerando mayúsculas/acentos
+ * y coincidencias parciales. Prioriza match exacto; si hay más de una
+ * coincidencia devuelve 'ambiguous' con los candidatos para que el llamador
+ * decida en vez de adivinar.
+ */
+export function matchActivity(
+  activities: OPActivity[],
+  name: string,
+): ActivityResolution {
+  const norm = (s: string) =>
+    s
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+  const target = norm(name);
+
+  const exact = activities.filter((a) => norm(a.name) === target);
+  if (exact.length === 1) {
+    return { status: "found", id: exact[0].id, name: exact[0].name };
+  }
+  if (exact.length > 1) {
+    return { status: "ambiguous", candidates: exact };
+  }
+
+  const partial = activities.filter((a) => norm(a.name).includes(target));
+  if (partial.length === 1) {
+    return { status: "found", id: partial[0].id, name: partial[0].name };
+  }
+  if (partial.length > 1) {
+    return { status: "ambiguous", candidates: partial };
+  }
+
+  return { status: "not_found", available: activities };
+}
+
 export class OpenProjectError extends Error {
   constructor(
     message: string,

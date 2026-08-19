@@ -18,6 +18,7 @@ import {
   OpenProjectError,
   idFromHref,
   iso8601ToHours,
+  matchActivity,
   readConfig,
 } from "./openproject.js";
 import { buildGalleryHtml, writeGalleryFile } from "./gallery.js";
@@ -92,6 +93,31 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Resuelve un nombre de actividad (ej. "Especificación") al activityId de
+ * OpenProject. Lanza un error legible si no hay match único.
+ */
+async function resolveActivityByName(
+  client: OpenProjectClient,
+  name: string,
+): Promise<number> {
+  const activities = await client.getActivities();
+  const resolved = matchActivity(activities, name);
+  if (resolved.status === "found") return resolved.id;
+  if (resolved.status === "ambiguous") {
+    const options = resolved.candidates
+      .map((a) => `"${a.name}" (id ${a.id})`)
+      .join(", ");
+    throw new Error(
+      `La actividad "${name}" es ambigua, coincide con: ${options}. Sé más específico o usa activityId directamente.`,
+    );
+  }
+  const options = resolved.available.map((a) => `"${a.name}" (id ${a.id})`).join(", ");
+  throw new Error(
+    `No existe una actividad llamada "${name}" en OpenProject. Disponibles: ${options}.`,
+  );
+}
+
 // ---------- servidor ----------
 
 const server = new McpServer({
@@ -112,6 +138,12 @@ server.registerTool(
       workPackageId: z.number().int().positive().optional(),
       projectId: z.number().int().positive().optional(),
       activityId: z.number().int().positive().optional(),
+      activityName: z
+        .string()
+        .optional()
+        .describe(
+          "Nombre de la actividad tal como aparece en OpenProject (ej. 'Especificación'); alternativa a activityId, se resuelve automáticamente. Ignorado si activityId ya viene indicado.",
+        ),
       spentOn: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -127,9 +159,13 @@ server.registerTool(
         .optional(),
     },
   },
-  async (args) => {
+  async ({ activityName, ...args }) => {
     try {
-      const entry = await createEntry(args);
+      let activityId = args.activityId;
+      if (activityId === undefined && activityName) {
+        activityId = await resolveActivityByName(requireClient(), activityName);
+      }
+      const entry = await createEntry({ ...args, activityId });
       return text(`Entry creada:\n${formatEntry(entry)}`);
     } catch (err) {
       return errorText(`No se pudo crear la entry: ${describeError(err)}`);
@@ -208,6 +244,12 @@ server.registerTool(
       workPackageId: z.number().int().positive().optional(),
       projectId: z.number().int().positive().optional(),
       activityId: z.number().int().positive().optional(),
+      activityName: z
+        .string()
+        .optional()
+        .describe(
+          "Nombre de la actividad tal como aparece en OpenProject; alternativa a activityId, se resuelve automáticamente. Ignorado si activityId ya viene indicado.",
+        ),
       spentOn: z
         .string()
         .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -222,9 +264,13 @@ server.registerTool(
         .optional(),
     },
   },
-  async ({ id, ...update }) => {
+  async ({ id, activityName, ...update }) => {
     try {
-      const entry = await updateEntry(id, update);
+      let activityId = update.activityId;
+      if (activityId === undefined && activityName) {
+        activityId = await resolveActivityByName(requireClient(), activityName);
+      }
+      const entry = await updateEntry(id, { ...update, activityId });
       return text(`Entry actualizada:\n${formatEntry(entry)}`);
     } catch (err) {
       return errorText(`No se pudo editar la entry: ${describeError(err)}`);

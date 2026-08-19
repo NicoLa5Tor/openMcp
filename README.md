@@ -97,9 +97,9 @@ como contraseña.
 
 | Tool | Descripción |
 | --- | --- |
-| `log_entry` | Registra una entrada de horas. Params: `description`*, `hours`*, `workPackageId`, `projectId`, `activityId`, `spentOn` (def. hoy), `startTime`, `endTime`. Si no hay `workPackageId` queda pendiente de asignar. |
+| `log_entry` | Registra una entrada de horas. Params: `description`*, `hours`*, `workPackageId`, `projectId`, `activityId`, `activityName`, `spentOn` (def. hoy), `startTime`, `endTime`. Si no hay `workPackageId` queda pendiente de asignar. |
 | `list_entries` | Lista entries por estado. Params: `status` = `pending` (def.) \| `sent` \| `all`; `groupBy` opcional = `workPackageId` \| `projectId` \| `activityId` \| `spentOn` (agrupa con subtotales). |
-| `edit_entry` | Edita una entry **pendiente**. Params: `id`* + cualquier campo editable. |
+| `edit_entry` | Edita una entry **pendiente**. Params: `id`* + cualquier campo editable (incluye `activityName`). |
 | `assign_entry` | Asigna un work package a varias entries. Params: `entryIds`*, `workPackageId`*. |
 | `delete_entry` | Borra una entry **pendiente**. Param: `id`*. |
 | `clear_sent` | Elimina de la bitácora local todas las entries ya enviadas (`sent`). |
@@ -129,6 +129,13 @@ como contraseña.
 
 ## Notas de comportamiento
 
+- **`activityName`** (en `log_entry` y `edit_entry`) resuelve el nombre tal como
+  aparece en el dropdown de OpenProject (ej. "Especificación", "Pruebas") al
+  `activityId` correspondiente, sin distinguir mayúsculas ni acentos. Si hay
+  match exacto lo usa; si no, intenta coincidencia parcial. Si el nombre es
+  ambiguo o no existe, la tool responde con la lista de actividades
+  disponibles en vez de adivinar. Requiere OpenProject configurado y se
+  ignora si ya se pasó `activityId` explícito.
 - Los ids locales son **UUID v4**. Las horas se guardan en decimal (`1.5` = 1h30m)
   y se convierten a duración ISO 8601 (`PT1H30M`) al subir.
 - El `projectId` de una entry, si no se indica, se **deriva del work package** al
