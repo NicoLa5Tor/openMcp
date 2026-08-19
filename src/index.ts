@@ -7,10 +7,15 @@ import {
   assignWorkPackage,
   clearSent,
   createEntry,
+  createProject,
   deleteEntry,
+  deleteProject,
+  getActiveProject,
   getEntry,
   listEntries,
+  listProjects,
   markSent,
+  setActiveProject,
   updateEntry,
 } from "./store.js";
 import {
@@ -22,7 +27,7 @@ import {
   readConfig,
 } from "./openproject.js";
 import { buildGalleryHtml, writeGalleryFile } from "./gallery.js";
-import type { TimelogEntry } from "./types.js";
+import type { LocalProject, TimelogEntry } from "./types.js";
 
 // ---------- helpers de formato ----------
 
@@ -59,6 +64,17 @@ function formatEntry(e: TimelogEntry): string {
     );
   }
   return parts.join("\n");
+}
+
+function formatProject(p: LocalProject, activeId: string | null): string {
+  const active = p.id === activeId ? " ★ ACTIVO" : "";
+  return [
+    `• ${p.name}${active}`,
+    `    id: ${p.id}`,
+    `    OpenProject: proyecto ${p.openprojectProjectId ?? "—"} · WP por defecto: ${
+      p.defaultWorkPackageId ?? "—"
+    } · actividad por defecto: ${p.defaultActivityId ?? "—"}`,
+  ].join("\n");
 }
 
 function groupLabel(
@@ -100,8 +116,9 @@ function describeError(err: unknown): string {
 async function resolveActivityByName(
   client: OpenProjectClient,
   name: string,
+  workPackageId?: number,
 ): Promise<number> {
-  const activities = await client.getActivities();
+  const activities = await client.getActivities(workPackageId);
   const resolved = matchActivity(activities, name);
   if (resolved.status === "found") return resolved.id;
   if (resolved.status === "ambiguous") {
@@ -163,7 +180,11 @@ server.registerTool(
     try {
       let activityId = args.activityId;
       if (activityId === undefined && activityName) {
-        activityId = await resolveActivityByName(requireClient(), activityName);
+        activityId = await resolveActivityByName(
+          requireClient(),
+          activityName,
+          args.workPackageId,
+        );
       }
       const entry = await createEntry({ ...args, activityId });
       return text(`Entry creada:\n${formatEntry(entry)}`);
@@ -189,18 +210,36 @@ server.registerTool(
         .enum(["workPackageId", "projectId", "activityId", "spentOn"])
         .optional()
         .describe("Agrupa el resultado por este campo (con subtotales)"),
+      onlyActiveProject: z
+        .boolean()
+        .default(false)
+        .describe("Si true, muestra solo las entries del proyecto local activo"),
     },
   },
-  async ({ status, groupBy }) => {
+  async ({ status, groupBy, onlyActiveProject }) => {
     try {
-      const entries = await listEntries(status);
+      let localProjectId: string | undefined;
+      let activeName: string | undefined;
+      if (onlyActiveProject) {
+        const active = await getActiveProject();
+        if (!active) {
+          return text("No hay proyecto local activo. Actívalo con project_use.");
+        }
+        localProjectId = active.id;
+        activeName = active.name;
+      }
+      const entries = await listEntries(status, localProjectId);
       if (entries.length === 0) {
-        return text(`No hay entries con status '${status}'.`);
+        return text(
+          `No hay entries con status '${status}'${
+            activeName ? ` en el proyecto '${activeName}'` : ""
+          }.`,
+        );
       }
       const totalHours = entries.reduce((acc, e) => acc + e.hours, 0);
       const header = `${entries.length} entr${
         entries.length === 1 ? "y" : "ies"
-      } (${status}) · ${totalHours.toFixed(2)}h en total`;
+      } (${status}${activeName ? `, proyecto '${activeName}'` : ""}) · ${totalHours.toFixed(2)}h en total`;
 
       if (!groupBy) {
         return text(header + "\n\n" + entries.map(formatEntry).join("\n\n"));
@@ -268,7 +307,14 @@ server.registerTool(
     try {
       let activityId = update.activityId;
       if (activityId === undefined && activityName) {
-        activityId = await resolveActivityByName(requireClient(), activityName);
+        // Contexto: el WP nuevo si se está cambiando, si no el de la entry actual.
+        const existing = await getEntry(id);
+        const wpContext = update.workPackageId ?? existing?.workPackageId;
+        activityId = await resolveActivityByName(
+          requireClient(),
+          activityName,
+          wpContext,
+        );
       }
       const entry = await updateEntry(id, { ...update, activityId });
       return text(`Entry actualizada:\n${formatEntry(entry)}`);
@@ -397,13 +443,21 @@ server.registerTool(
   "get_activities",
   {
     title: "Listar actividades de time entry",
-    description: "Obtiene las actividades disponibles para registrar tiempo.",
-    inputSchema: {},
+    description:
+      "Obtiene las actividades disponibles para registrar tiempo. Las actividades son por-proyecto: si pasas workPackageId se listan las de ese contexto; si no, se usa cualquier work package accesible.",
+    inputSchema: {
+      workPackageId: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Work package cuyo proyecto define las actividades disponibles"),
+    },
   },
-  async () => {
+  async ({ workPackageId }) => {
     try {
       const client = requireClient();
-      const activities = await client.getActivities();
+      const activities = await client.getActivities(workPackageId);
       return json(activities.map((a) => ({ id: a.id, name: a.name })));
     } catch (err) {
       return errorText(
@@ -639,6 +693,110 @@ server.registerTool(
       );
     } catch (err) {
       return errorText(`No se pudo generar la galería: ${describeError(err)}`);
+    }
+  },
+);
+
+// 13. project_create
+server.registerTool(
+  "project_create",
+  {
+    title: "Crear proyecto local",
+    description:
+      "Crea un proyecto local (workspace) para agrupar horas. Define valores por defecto (proyecto de OpenProject, work package y actividad) que se aplican al registrar horas mientras esté activo. Si es el primer proyecto, queda activo automáticamente. Se comparte entre Claude Code y Claude Desktop.",
+    inputSchema: {
+      name: z.string().describe("Nombre del proyecto local (ej. 'RQ001')"),
+      openprojectProjectId: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Id del proyecto de OpenProject asociado"),
+      defaultWorkPackageId: z.number().int().positive().optional(),
+      defaultActivityId: z.number().int().positive().optional(),
+    },
+  },
+  async (args) => {
+    try {
+      const project = await createProject(args);
+      const { activeProjectId } = await listProjects();
+      return text(
+        `Proyecto local creado:\n${formatProject(project, activeProjectId)}`,
+      );
+    } catch (err) {
+      return errorText(`No se pudo crear el proyecto: ${describeError(err)}`);
+    }
+  },
+);
+
+// 14. project_list
+server.registerTool(
+  "project_list",
+  {
+    title: "Listar proyectos locales",
+    description:
+      "Lista los proyectos locales (workspaces) y marca cuál está activo. Distinto de get_projects, que consulta los proyectos de OpenProject.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      const { projects, activeProjectId } = await listProjects();
+      if (projects.length === 0) {
+        return text(
+          "No hay proyectos locales. Crea uno con project_create.",
+        );
+      }
+      return text(
+        projects.map((p) => formatProject(p, activeProjectId)).join("\n\n"),
+      );
+    } catch (err) {
+      return errorText(`No se pudieron listar los proyectos: ${describeError(err)}`);
+    }
+  },
+);
+
+// 15. project_use
+server.registerTool(
+  "project_use",
+  {
+    title: "Activar un proyecto local",
+    description:
+      "Marca un proyecto local como activo. Las nuevas horas (log_entry) se crean dentro de él y toman sus valores por defecto.",
+    inputSchema: {
+      id: z.string().describe("Id del proyecto local a activar"),
+    },
+  },
+  async ({ id }) => {
+    try {
+      const project = await setActiveProject(id);
+      return text(`Proyecto activo: ${project.name} (${project.id})`);
+    } catch (err) {
+      return errorText(`No se pudo activar el proyecto: ${describeError(err)}`);
+    }
+  },
+);
+
+// 16. project_delete
+server.registerTool(
+  "project_delete",
+  {
+    title: "Borrar un proyecto local",
+    description:
+      "Borra un proyecto local. No borra sus entries: solo las desvincula del proyecto.",
+    inputSchema: {
+      id: z.string().describe("Id del proyecto local a borrar"),
+    },
+  },
+  async ({ id }) => {
+    try {
+      const { project, untagged } = await deleteProject(id);
+      return text(
+        `Proyecto "${project.name}" borrado. ${untagged} entr${
+          untagged === 1 ? "y" : "ies"
+        } quedaron sin proyecto.`,
+      );
+    } catch (err) {
+      return errorText(`No se pudo borrar el proyecto: ${describeError(err)}`);
     }
   },
 );

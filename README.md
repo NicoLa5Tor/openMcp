@@ -93,12 +93,26 @@ como contraseña.
 
 ## Tools
 
+### Proyectos locales (workspaces)
+
+Un **proyecto local** agrupa horas y define valores por defecto (proyecto de
+OpenProject, work package y actividad) que se aplican al registrar horas
+mientras esté activo. La lista de proyectos y cuál está activo viven en el
+mismo store compartido, así que **Claude Code y Claude Desktop ven lo mismo**.
+
+| Tool | Descripción |
+| --- | --- |
+| `project_create` | Crea un proyecto local. Params: `name`*, `openprojectProjectId`, `defaultWorkPackageId`, `defaultActivityId`. El primero queda activo automáticamente. |
+| `project_list` | Lista los proyectos locales y marca el activo (distinto de `get_projects`, que consulta OpenProject). |
+| `project_use` | Activa un proyecto local. Param: `id`*. Las nuevas horas se crean dentro de él con sus defaults. |
+| `project_delete` | Borra un proyecto local. No borra sus entries: solo las desvincula. Param: `id`*. |
+
 ### Bitácora local
 
 | Tool | Descripción |
 | --- | --- |
-| `log_entry` | Registra una entrada de horas. Params: `description`*, `hours`*, `workPackageId`, `projectId`, `activityId`, `activityName`, `spentOn` (def. hoy), `startTime`, `endTime`. Si no hay `workPackageId` queda pendiente de asignar. |
-| `list_entries` | Lista entries por estado. Params: `status` = `pending` (def.) \| `sent` \| `all`; `groupBy` opcional = `workPackageId` \| `projectId` \| `activityId` \| `spentOn` (agrupa con subtotales). |
+| `log_entry` | Registra una entrada de horas. Params: `description`*, `hours`*, `workPackageId`, `projectId`, `activityId`, `activityName`, `spentOn` (def. hoy), `startTime`, `endTime`. Toma los defaults del proyecto activo para los campos que no indiques. Si no hay `workPackageId` queda pendiente de asignar. |
+| `list_entries` | Lista entries por estado. Params: `status` = `pending` (def.) \| `sent` \| `all`; `groupBy` opcional = `workPackageId` \| `projectId` \| `activityId` \| `spentOn`; `onlyActiveProject` (bool) para ver solo las del proyecto activo. |
 | `edit_entry` | Edita una entry **pendiente**. Params: `id`* + cualquier campo editable (incluye `activityName`). |
 | `assign_entry` | Asigna un work package a varias entries. Params: `entryIds`*, `workPackageId`*. |
 | `delete_entry` | Borra una entry **pendiente**. Param: `id`*. |
@@ -127,8 +141,19 @@ como contraseña.
 
 \* = requerido.
 
+## Estado compartido entre Claude Code y Claude Desktop
+
+Ambos clientes ejecutan el mismo paquete y leen/escriben el **mismo fichero**
+`~/.openproject-timelog/entries.json`. Por eso comparten automáticamente las
+entries y los proyectos locales: creas o activas un proyecto en un cliente y el
+otro lo ve. El fichero se escribe de forma atómica y las operaciones se
+serializan, de modo que escrituras concurrentes no lo corrompen.
+
 ## Notas de comportamiento
 
+- **Proyecto activo:** `log_entry` toma del proyecto local activo los campos que
+  no indiques (`projectId`, `workPackageId`, `activityId`) y etiqueta la entry
+  con ese proyecto. Cámbialo con `project_use`.
 - **`activityName`** (en `log_entry` y `edit_entry`) resuelve el nombre tal como
   aparece en el dropdown de OpenProject (ej. "Especificación", "Pruebas") al
   `activityId` correspondiente, sin distinguir mayúsculas ni acentos. Si hay

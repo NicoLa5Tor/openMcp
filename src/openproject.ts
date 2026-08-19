@@ -216,24 +216,78 @@ export class OpenProjectClient {
   }
 
   /**
-   * OpenProject no expone una colección GET /api/v3/time_entries/activities
-   * (solo el recurso individual .../activities/{id}, que 404 si se llama
-   * como listado). Las actividades disponibles se leen del schema del
-   * recurso time_entries, en activity._links.allowedValues.
+   * Lista las actividades de time entry disponibles.
+   *
+   * OpenProject NO expone una colección GET /api/v3/time_entries/activities
+   * (404), y el schema genérico trae activity._links vacío. Las actividades
+   * son por-proyecto y se obtienen del *form* de time_entries en el contexto
+   * de un work package: POST /api/v3/time_entries/form devuelve
+   * _embedded.schema.activity._links.allowedValues.
+   *
+   * Si no se pasa workPackageId, se toma cualquier work package como contexto
+   * para poder listarlas.
    */
-  async getActivities(): Promise<OPActivity[]> {
-    const schema = await this.request<{
-      activity?: { _links?: { allowedValues?: OPLink[] } };
-    }>("/api/v3/time_entries/schema");
-    const allowed = schema?.activity?._links?.allowedValues;
+  /**
+   * Encuentra un work package que sirva de contexto para leer las actividades
+   * disponibles. Prioriza los WP donde el usuario actual YA ha registrado
+   * tiempo (garantiza permiso de time-logging); si no tiene ninguno, cae al
+   * primer work package accesible.
+   */
+  private async findContextWorkPackageId(): Promise<number | undefined> {
+    try {
+      const me = await this.request<{ id: number }>("/api/v3/users/me");
+      if (me?.id !== undefined) {
+        const filters = JSON.stringify([
+          { user: { operator: "=", values: [String(me.id)] } },
+        ]);
+        const sortBy = JSON.stringify([["id", "desc"]]);
+        const params = new URLSearchParams({
+          pageSize: "1",
+          filters,
+          sortBy,
+        });
+        const te = await this.request<OPCollection<OPTimeEntry>>(
+          `/api/v3/time_entries?${params.toString()}`,
+        );
+        const wpHref = te?._embedded?.elements?.[0]?._links?.workPackage?.href;
+        const id = idFromHref(wpHref);
+        if (id !== undefined) return id;
+      }
+    } catch {
+      // seguimos con el fallback
+    }
+    const wps = await this.request<OPCollection<OPWorkPackage>>(
+      "/api/v3/work_packages?pageSize=1",
+    );
+    return wps?._embedded?.elements?.[0]?.id;
+  }
+
+  async getActivities(workPackageId?: number): Promise<OPActivity[]> {
+    const wpId = workPackageId ?? (await this.findContextWorkPackageId());
+    if (wpId === undefined) {
+      throw new OpenProjectError(
+        "No se pudo determinar un work package de contexto para listar las actividades. Indica un workPackageId (uno donde tengas permiso de registrar tiempo).",
+      );
+    }
+
+    const form = await this.request<{
+      _embedded?: { schema?: { activity?: { _links?: { allowedValues?: OPLink[] } } } };
+    }>("/api/v3/time_entries/form", {
+      method: "POST",
+      body: JSON.stringify({
+        _links: { workPackage: { href: `/api/v3/work_packages/${wpId}` } },
+      }),
+    });
+
+    const allowed = form?._embedded?.schema?.activity?._links?.allowedValues;
     if (!Array.isArray(allowed)) {
       throw new OpenProjectError(
-        "OpenProject no devolvió actividades en el schema de time_entries (activity._links.allowedValues). Verifica la versión/configuración de tu instancia.",
+        `OpenProject no devolvió actividades en el form de time_entries (contexto WP ${wpId}). Revisa permisos o la configuración de actividades del proyecto.`,
       );
     }
     return allowed
       .map((link) => ({ id: idFromHref(link.href), name: link.title ?? "" }))
-      .filter((a): a is OPActivity => a.id !== undefined);
+      .filter((a): a is OPActivity => a.id !== undefined && a.name.length > 0);
   }
 
   async getTimeEntries(opts: {
